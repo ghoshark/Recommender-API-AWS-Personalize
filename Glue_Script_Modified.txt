@@ -1,0 +1,60 @@
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+
+## @params: [TempDir, JOB_NAME]
+args = getResolvedOptions(sys.argv, ['TempDir','JOB_NAME'])
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
+## @type: DataSource
+## @args: [database = "ids_input_db", redshift_tmp_dir = TempDir, table_name = "analytical_edw_aws_personalize_users", transformation_ctx = "DataSource0"]
+## @return: DataSource0
+## @inputs: []
+#DataSource0 = glueContext.create_dynamic_frame.from_catalog(database = "ids_input_db", redshift_tmp_dir = args["TempDir"], table_name = "analytical_edw_aws_personalize_users", transformation_ctx = "DataSource0")
+DataSource0 = glueContext.create_dynamic_frame.from_catalog(database = "ids_input_db", redshift_tmp_dir = args["TempDir"], table_name = "analytical_edw_aws_personalize_users", transformation_ctx = "DataSource0") 
+DataSource0 = DataSource0.coalesce(1) 
+## @type: ApplyMapping
+## @args: [mappings = [("total_votes", "int", "total_votes", "int"), ("user_id", "int", "user_id", "int"), ("helpful_votes", "int", "helpful_votes", "int")], transformation_ctx = "Transform0"]
+## @return: Transform0
+## @inputs: [frame = DataSource0]
+Transform0 = ApplyMapping.apply(frame = DataSource0, mappings = [("total_votes", "int", "total_votes", "int"), ("user_id", "int", "user_id", "int"), ("helpful_votes", "int", "helpful_votes", "int")], transformation_ctx = "Transform0")
+## @type: DataSink
+## @args: [connection_type = "s3", catalog_database_name = "s3_output_db", format = "csv", connection_options = {"path": "s3://amazon-personalize-data-storage/glue_incoming_data/", "partitionKeys": [], "enableUpdateCatalog":true, "updateBehavior":"LOG"}, catalog_table_name = "aws_personalize_users", transformation_ctx = "DataSink0"]
+## @return: DataSink0
+## @inputs: [frame = Transform0]
+DataSink0 = glueContext.getSink(path = "s3://amazon-personalize-data-storage/glue_incoming_data/", connection_type = "s3", updateBehavior = "LOG", partitionKeys = [], enableUpdateCatalog = True, transformation_ctx = "DataSink0")
+DataSink0.setCatalogInfo(catalogDatabase = "s3_output_db",catalogTableName = "aws_personalize_users")
+DataSink0.setFormat("csv")
+DataSink0.writeFrame(Transform0)
+
+###########
+
+import boto3
+client = boto3.client('s3')
+
+bucket_name = 'amazon-personalize-data-storage'
+prefix = 'glue_incoming_data/'
+#getting all the content/file inside the bucket. 
+response = client.list_objects_v2(Bucket=bucket_name, Prefix=prefix, Delimiter='/')
+names = response["Contents"]
+
+#Find out the file which have part-000* in it's Key
+particulars = [name['Key'] for name in names if 'part-r-00000' in name['Key']]
+
+#Find out the prefix of part-000* because we want to retain the partitions schema 
+location = [particular.split('part-r-00000')[0] for particular in particulars]
+
+#Constraint - copy_object has limit of 5GB
+for key,particular in enumerate(particulars):
+    #client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key=location[key]+"newfile")
+    client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key="glue_incoming_data/" + "users.csv")
+    client.delete_object(Bucket=bucket_name, Key=particular)
+
+job.commit()

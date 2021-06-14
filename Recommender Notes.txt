@@ -1,0 +1,128 @@
+https://www.pinecone.io/docs/examples/product-recommendation-engine/
+
+https://aws.amazon.com/blogs/architecture/automating-recommendation-engine-training-with-amazon-personalize-and-aws-glue/
+
+---------------------------------------
+
+
+https://aws.amazon.com/blogs/machine-learning/amazon-personalize-can-now-use-10x-more-item-attributes-to-improve-relevance-of-recommendations/
+
+data: https://s3.amazonaws.com/amazon-reviews-pds/readme.html
+
+Download data : the data is available in TSV files in the amazon-reviews-pds S3 bucket in AWS US East Region , bt this is not visible to us.
+So, we download from website: 
+https://s3.amazonaws.com/amazon-reviews-pds/tsv/index.txt
+
+https://s3.amazonaws.com/amazon-reviews-pds/tsv/amazon_reviews_us_Mobile_Electronics_v1_00.tsv.gz
+
+---------------------------------------
+
+arn:aws:personalize:eu-west-1:237763290425:campaign/aws-personalize-campaign
+
+
+s3://amazon-personalize-data-storage/interaction.csv
+
+aws personalize describe-campaign --campaign-arn arn:aws:personalize:us-west-1:237763290425:campaign/aws-personalize-campaign
+
+
+API for recommendation: https://swkxs2p89k.execute-api.eu-west-1.amazonaws.com/default/aws-personalize-recommender?userId=52946117
+
+Process to load data for testing:
+We need to load the 3 csv files from laptop to Staging database(on prem, DBeaver). To do this first convert the .tsv files to .csv format manually.
+Then create 3 tables in "staging_area" database called :
+
+	aws-personalize-db.user
+	aws-personalize-db.item
+	aws-personalize-db.interaction
+
+Upload the data from .csv files to these 3 tables by right click->Data Import
+Now, right click->Export data as SQL inserts and save the 3 .sql files.
+
+Next, create 3 similar tables in IDS ADL Dev. To create, get the `create table` DDL from previous tables.
+
+	edw.aws_personalize_interactions
+	edw.aws_personalize_items
+	edw.aws_personalize_users
+
+Copy the SQL inserts and run them after changing the db and table names to IDS.
+Now, data is uploaded in IDS ADL Dev analytical schema
+
+
+AWS Glue to connect to IDS and push files to S3(for consumption by Personalize):
+
+	https://aws.amazon.com/blogs/big-data/how-to-access-and-analyze-on-premises-data-stores-using-aws-glue/
+	https://aws.amazon.com/blogs/database/how-to-extract-transform-and-load-data-for-analytic-processing-using-aws-glue-part-2/
+	https://hevodata.com/blog/aurora-to-redshift-migrate-data-using-aws-glue/
+	https://dev.to/amree/exporting-data-from-rds-to-s3-using-aws-glue-mai
+
+Glue by default will generate multiple small files.
+To generate just 1 output file, you have to modfy the script by adding coalesce(1) : https://aws.amazon.com/premiumsupport/knowledge-center/glue-job-output-large-files/
+
+Modify the script to rename the output file to users/items/interactions since spark by default adds partition to the file name lke part-r-00000
+https://stackoverflow.com/questions/48770028/aws-glue-output-file-name
+
+
+import boto3
+client = boto3.client('s3')
+
+bucket_name = 'amazon-personalize-data-storage'
+prefix = 'glue_incoming_data/'
+#getting all the content/file inside the bucket. 
+response = client.list_objects_v2(Bucket=bucket_name, Prefix=prefix, Delimiter='/')
+names = response["Contents"]
+
+#Find out the file which have part-000* in it's Key
+particulars = [name['Key'] for name in names if 'part-r-00000' in name['Key']]
+
+#Find out the prefix of part-000* because we want to retain the partitions schema 
+location = [particular.split('part-r-00000')[0] for particular in particulars]
+
+#Constraint - copy_object has limit of 5GB
+for key,particular in enumerate(particulars):
+    #client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key=location[key]+"newfile")
+    client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key="glue_incoming_data/" + "users.csv")
+    client.delete_object(Bucket=bucket_name, Key=particular)
+
+job.commit()
+
+
+Database
+admin/hifive2022!
+
+----------------------------------------------------------------------
+
+AWS Glue parameters
+
+s3://amazon-personalize-data-storage/glue_incoming_data/
+ids_adl_dev_to_s3_aws_personalize_users
+aws_personalize_users
+ids_adl_dev_aws_personalize_users_crawler
+s3_adl_dev_aws_personalize_users_crawler
+ids_adl_dev_aws_personalize_users_job
+s3://amazon-personalize-data-storage/glue_scripts/
+s3://amazon-personalize-data-storage/glue_temp/
+s3://amazon-personalize-data-storage/glue_logs/
+euw1-gm-dev-euw-1a-1
+
+s3://amazon-personalize-data-storage/glue_incoming_data/
+
+ids_adl_dev_to_s3_aws_personalize_users
+aws_personalize_users
+ids_adl_dev_aws_personalize_users_crawler
+s3_adl_dev_aws_personalize_users_crawler
+ids_adl_dev_aws_personalize_users_job
+s3://amazon-personalize-data-storage/glue_scripts/
+s3://amazon-personalize-data-storage/glue_temp/
+s3://amazon-personalize-data-storage/glue_logs/
+
+--------------------------------------------------------------------
+
+STEP function to automate AWS personalize
+
+https://aws.amazon.com/blogs/machine-learning/automating-amazon-personalize-solution-using-the-aws-step-functions-data-science-sdk/
+
+The various Lambda functions for AWS personalize are in this repo:
+
+https://github.com/aws-samples/personalize-data-science-sdk-workflow/tree/master/lambda
+
+
