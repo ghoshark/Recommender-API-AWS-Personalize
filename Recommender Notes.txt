@@ -55,6 +55,13 @@ AWS Glue to connect to IDS and push files to S3(for consumption by Personalize):
 	https://hevodata.com/blog/aurora-to-redshift-migrate-data-using-aws-glue/
 	https://dev.to/amree/exporting-data-from-rds-to-s3-using-aws-glue-mai
 
+Glue job extracting data from JDBC:
+https://www.progress.com/tutorials/jdbc/accessing-data-using-jdbc-on-aws-glue
+https://stackoverflow.com/questions/31395743/how-to-connect-to-amazon-redshift-or-other-dbs-in-apache-spark
+https://stackoverflow.com/questions/58121361/how-to-extract-data-from-views-in-db-schema-into-a-dataframe-in-glue
+https://stackoverflow.com/questions/58268551/how-to-connect-to-redshift-from-aws-glue-pyspark
+
+
 Glue by default will generate multiple small files.
 To generate just 1 output file, you have to modfy the script by adding coalesce(1) : https://aws.amazon.com/premiumsupport/knowledge-center/glue-job-output-large-files/
 

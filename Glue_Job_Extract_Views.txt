@@ -1,0 +1,66 @@
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.dynamicframe import DynamicFrame
+from awsglue.job import Job
+#from pyspark.sql import SQLContext
+
+## @params: [TempDir, JOB_NAME]
+args = getResolvedOptions(sys.argv, ['TempDir','JOB_NAME'])
+#args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+ 
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
+
+##Read Data from  JDBCift driver in to DataFrame
+
+#sqlContext = SQLContext(sc)
+#source_df = sqlContext.read.load(source="jdbc", url="jdbc:redshift://inteldatastore-redshift-dev.c4wkyrqfpizc.eu-west-1.redshift.amazonaws.com:5439/analytical?user=sesa475934&password=Changeme@123", query="select valid_to, valid_from from edw.dim_profit_center")
+
+source_df = spark.read \
+    .format("com.databricks.spark.redshift") \
+    .option("url", "jdbc:redshift://inteldatastore-cpm-prod.cuvvdjkpet4x.eu-west-1.redshift.amazonaws.com:5439/analytical") \
+    .option("dbtable", "edw.fact_opportunity") \
+    .option("tempdir", "s3://d2w-winning-launches/AWS_TEST_ML/temp/") \
+    .option("forward_spark_s3_credentials", "true") \
+    .option("user", "sesa475934") \
+    .option("password", "Changeme123!") \
+    .load() 
+
+##Convert DataFrames to AWS Glue's DynamicFrames Object
+dynamic_dframe = DynamicFrame.fromDF(source_df, glueContext, "dynamic_df")
+dynamic_dframe = dynamic_dframe.coalesce(1) 
+
+##Write Dynamic Frames to S3 in CSV format.
+datasink4 = glueContext.write_dynamic_frame.from_options(frame = dynamic_dframe, connection_type = "s3", connection_options = {"path": "s3://d2w-winning-launches/AWS_TEST_ML"}, format = "csv", transformation_ctx = "datasink4")
+
+###########
+# This code-section renames the output file as per your requirement
+
+import boto3
+client = boto3.client('s3')
+
+bucket_name = 'd2w-winning-launches'
+prefix = 'AWS_TEST_ML/'
+#getting all the content/file inside the bucket. 
+response = client.list_objects_v2(Bucket=bucket_name, Prefix=prefix, Delimiter='/')
+names = response["Contents"]
+
+#Find out the file which have part-000* in it's Key
+particulars = [name['Key'] for name in names if 'part-r-00000' in name['Key']]
+
+#Find out the prefix of part-000* because we want to retain the partitions schema 
+location = [particular.split('part-r-00000')[0] for particular in particulars]
+
+#Constraint - copy_object has limit of 5GB
+for key,particular in enumerate(particulars):
+    #client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key=location[key]+"newfile")
+    client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key="AWS_TEST_ML/" + "fact_opportunity.csv")
+    client.delete_object(Bucket=bucket_name, Key=particular)
+    
+job.commit()
