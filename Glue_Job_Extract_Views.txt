@@ -5,31 +5,39 @@ from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.dynamicframe import DynamicFrame
 from awsglue.job import Job
-#from pyspark.sql import SQLContext
+import boto3
+import base64
+import json
 
 ## @params: [TempDir, JOB_NAME]
 args = getResolvedOptions(sys.argv, ['TempDir','JOB_NAME'])
-#args = getResolvedOptions(sys.argv, ['JOB_NAME'])
- 
+
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
-##Read Data from  JDBCift driver in to DataFrame
+#Retreive login credentials for Intel DS
+secret_name = "IDS_ADL_LOGIN_CRED"
+region_name = "eu-west-1"
+session = boto3.session.Session()
+client = session.client(service_name='secretsmanager',region_name=region_name)
+get_secret_value_response = client.get_secret_value(SecretId=secret_name) 
+secret = json.loads(get_secret_value_response['SecretString'])
+USER = secret['IDS_ADL_DEV_USER']   
+PASSWORD = secret['IDS_ADL_DEV_PASSWORD']    
+URL = secret['IDS_ADL_DEV_URL']   
 
-#sqlContext = SQLContext(sc)
-#source_df = sqlContext.read.load(source="jdbc", url="jdbc:redshift://inteldatastore-redshift-dev.c4wkyrqfpizc.eu-west-1.redshift.amazonaws.com:5439/analytical?user=sesa475934&password=Changeme@123", query="select valid_to, valid_from from edw.dim_profit_center")
-
+##Read Data from  Databricks driver in to DataFrame
 source_df = spark.read \
     .format("com.databricks.spark.redshift") \
-    .option("url", "jdbc:redshift://inteldatastore-cpm-prod.cuvvdjkpet4x.eu-west-1.redshift.amazonaws.com:5439/analytical") \
-    .option("dbtable", "edw.fact_opportunity") \
+    .option("url", URL) \
+    .option("dbtable", "edw.fact_net_orders") \
     .option("tempdir", "s3://d2w-winning-launches/AWS_TEST_ML/temp/") \
     .option("forward_spark_s3_credentials", "true") \
-    .option("user", "sesa475934") \
-    .option("password", "Changeme123!") \
+    .option("user", USER) \
+    .option("password", PASSWORD) \
     .load() 
 
 ##Convert DataFrames to AWS Glue's DynamicFrames Object
@@ -60,7 +68,7 @@ location = [particular.split('part-r-00000')[0] for particular in particulars]
 #Constraint - copy_object has limit of 5GB
 for key,particular in enumerate(particulars):
     #client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key=location[key]+"newfile")
-    client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key="AWS_TEST_ML/" + "fact_opportunity.csv")
+    client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key="AWS_TEST_ML/" + "edw.fact_net_orders.csv")
     client.delete_object(Bucket=bucket_name, Key=particular)
     
 job.commit()
