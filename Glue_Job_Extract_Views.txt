@@ -9,7 +9,7 @@ import boto3
 import base64
 import json
 
-## @params: [TempDir, JOB_NAME]
+# @params: [TempDir, JOB_NAME]
 args = getResolvedOptions(sys.argv, ['TempDir','JOB_NAME'])
 
 sc = SparkContext()
@@ -25,32 +25,49 @@ session = boto3.session.Session()
 client = session.client(service_name='secretsmanager',region_name=region_name)
 get_secret_value_response = client.get_secret_value(SecretId=secret_name) 
 secret = json.loads(get_secret_value_response['SecretString'])
-USER = secret['IDS_ADL_DEV_USER']   
-PASSWORD = secret['IDS_ADL_DEV_PASSWORD']    
-URL = secret['IDS_ADL_DEV_URL']   
+USER = secret['IDS_ADL_PRD_USER']   
+PASSWORD = secret['IDS_ADL_PRD_PASSWORD']    
+URL = secret['IDS_ADL_PRD_URL']   
 
-##Read Data from  Databricks driver in to DataFrame
+#Specify the table or view that you want to extract from
+dbtable = "edw.fact_net_orders"
+filename = "net_sales_order"
+
+query = """
+  (select dca.gold_site_name as customer_name, gold_sacc_id_,
+  round(sum(std_net_amount_invoiced),0) as net_sales 
+  from edw.fact_net_sales fns
+  inner join edw.dim_profit_center dpc on fns.profit_center_l_ = dpc.id_ and fns.se_company_l_ = dpc.se_company_l_ 
+  inner join edw.dim_customer_all dca on dca.leg_sacc_id_ = fns.sacc_id__sold_to and dca.leg_sacc_ps_ = fns.ps_
+  where document_date >= '2020-01-01' and document_date <= '2021-12-31'
+  and net_sales_flag = 'Y'
+  and current_flag = 'Y'
+  and std_net_amount_invoiced != 0
+  group by dca.gold_site_name, gold_sacc_id_
+  order by dca.gold_site_name, gold_sacc_id_) 
+"""
+
+#Read Data using Databricks driver in to DataFrame
 source_df = spark.read \
     .format("com.databricks.spark.redshift") \
     .option("url", URL) \
-    .option("dbtable", "edw.fact_net_orders") \
+    .option("dbtable", query) \
     .option("tempdir", "s3://d2w-winning-launches/AWS_TEST_ML/temp/") \
     .option("forward_spark_s3_credentials", "true") \
     .option("user", USER) \
     .option("password", PASSWORD) \
     .load() 
 
-##Convert DataFrames to AWS Glue's DynamicFrames Object
+#Convert DataFrames to AWS Glue's DynamicFrames Object
 dynamic_dframe = DynamicFrame.fromDF(source_df, glueContext, "dynamic_df")
 dynamic_dframe = dynamic_dframe.coalesce(1) 
 
-##Write Dynamic Frames to S3 in CSV format.
+#Write Dynamic Frames to S3 in CSV format
 datasink4 = glueContext.write_dynamic_frame.from_options(frame = dynamic_dframe, connection_type = "s3", connection_options = {"path": "s3://d2w-winning-launches/AWS_TEST_ML"}, format = "csv", transformation_ctx = "datasink4")
 
 ###########
-# This code-section renames the output file as per your requirement
+#This code-section renames the output file as per your requirement
 
-import boto3
 client = boto3.client('s3')
 
 bucket_name = 'd2w-winning-launches'
@@ -68,7 +85,7 @@ location = [particular.split('part-r-00000')[0] for particular in particulars]
 #Constraint - copy_object has limit of 5GB
 for key,particular in enumerate(particulars):
     #client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key=location[key]+"newfile")
-    client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key="AWS_TEST_ML/" + "edw.fact_net_orders.csv")
+    client.copy_object(Bucket=bucket_name, CopySource=bucket_name + "/" + particular, Key="AWS_TEST_ML/" + filename + ".csv")
     client.delete_object(Bucket=bucket_name, Key=particular)
     
 job.commit()
